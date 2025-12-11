@@ -4,8 +4,8 @@
 
 ### Check Vault Status
 ```bash
-# Overall status
-kubectl -n vault exec vault-0 -- vault status
+# Overall status (requires token for full details)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault status
 
 # Check all pods
 for i in 0 1 2; do 
@@ -40,7 +40,8 @@ kubectl -n vault exec vault-0 -- cat /vault/logs/vault-audit.log
 ```bash
 export VAULT_ADDR=http://<vault-ip>:8200
 export VAULT_TOKEN=<admin-token>
-vault login $VAULT_TOKEN
+# For kubectl exec commands, pass token explicitly:
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault <command>
 ```
 
 ### Kubernetes Auth (from pod)

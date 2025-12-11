@@ -40,6 +40,8 @@ This deployment implements three distinct access levels:
 - `jq` for JSON processing (for init script)
 - Persistent volume support (Linode Block Storage)
 
+**📖 Important:** Review [DEPLOYMENT-NOTES.md](DEPLOYMENT-NOTES.md) for detailed configuration explanations, common issues, and lessons learned from real-world deployments.
+
 ## Deployment Steps
 
 ### 1. Deploy Vault Infrastructure
@@ -48,15 +50,23 @@ This deployment implements three distinct access levels:
 # Create the Vault namespace and deploy StatefulSet
 kubectl apply -f vault-statefulset.yaml
 
-# Create RBAC resources
+# Create RBAC resources (includes pod update/patch permissions)
 kubectl apply -f vault-rbac.yaml
 
 # Create service accounts for different access levels
 kubectl apply -f vault-service-accounts.yaml
 
-# Wait for pods to be running (they will be sealed)
+# Wait for all 3 pods to be running (may take 1-2 minutes)
 kubectl -n vault get pods -w
+
+# Expected output (all 3 pods should start together):
+# NAME      READY   STATUS    RESTARTS   AGE
+# vault-0   1/1     Running   0          60s
+# vault-1   1/1     Running   0          60s
+# vault-2   1/1     Running   0          60s
 ```
+
+**Note:** With `podManagementPolicy: Parallel`, all 3 pods start simultaneously. They will show as Running even when sealed/uninitialized - this is expected behavior.
 
 ### 2. Initialize and Configure Vault
 
@@ -64,12 +74,18 @@ kubectl -n vault get pods -w
 # Make the init script executable
 chmod +x vault-init.sh
 
-# Run initialization (this will initialize and configure Vault)
+# Run initialization (this will initialize vault-0, join vault-1 and vault-2 to Raft cluster)
 ./vault-init.sh
 
 # IMPORTANT: The script creates vault-init-keys.json
 # Store this file securely immediately!
 ```
+
+**Important Notes:**
+- Only vault-0 (the Raft leader) is initialized
+- vault-1 and vault-2 automatically join the Raft cluster
+- All commands require authentication with the root token
+- Use `env VAULT_TOKEN=$VAULT_TOKEN` when running kubectl exec commands
 
 **⚠️ CRITICAL SECURITY NOTICE:**
 - The `vault-init-keys.json` file contains unseal keys and the root token
@@ -292,6 +308,65 @@ spec:
 10. **Backup**: Regular automated backups of Raft snapshots
 
 ## Troubleshooting
+
+### Only vault-0 Pod Exists
+
+If only vault-0 is created and you don't see vault-1 and vault-2:
+
+**Cause:** Old StatefulSet without `podManagementPolicy: Parallel`
+
+**Fix:**
+```bash
+# Delete and recreate with the correct configuration
+kubectl delete statefulset vault -n vault
+kubectl delete pvc -l app=vault -n vault
+kubectl apply -f vault-statefulset.yaml
+```
+
+### RBAC Permission Errors (403)
+
+If you see errors like "PATCH pods giving up after 1 attempt(s): bad status code: 403":
+
+**Cause:** Vault service account lacks pod update permissions
+
+**Fix:**
+```bash
+# Apply updated RBAC
+kubectl apply -f vault-rbac.yaml
+
+# Restart pods
+kubectl -n vault delete pod --all
+```
+
+### Vault Won't Unseal After Initialization
+
+If vault-1 and vault-2 show "Vault is not initialized" errors during unseal:
+
+**Cause:** In Raft mode, only the leader (vault-0) is initialized. Follower nodes must join the cluster.
+
+**Fix:**
+```bash
+# Use the recovery script
+chmod +x check-status.sh recover-vault-fixed.sh
+./check-status.sh  # View current status
+./recover-vault-fixed.sh  # Complete the setup
+```
+
+### Authentication Required Errors
+
+All vault commands (except unseal) require authentication:
+
+```bash
+# Export the root token
+export VAULT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
+
+# Use env VAULT_TOKEN in kubectl exec
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault status
+```
+
+### DNS Lookup Failures During Startup
+
+Errors like "lookup vault-1.vault-internal: no such host" during initial startup are **normal** and can be ignored. They occur while pods are being created.
 
 ### Vault Won't Unseal
 

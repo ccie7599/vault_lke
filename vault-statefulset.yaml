@@ -101,6 +101,7 @@ metadata:
 spec:
   serviceName: vault-internal
   replicas: 3
+  podManagementPolicy: Parallel  # Create all pods at once instead of sequentially
   selector:
     matchLabels:
       app: vault
@@ -161,11 +162,11 @@ spec:
               containerPort: 8201
               protocol: TCP
           readinessProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -ec
-                - vault status -tls-skip-verify
+            # This probe accepts sealed and uninitialized status
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+              port: 8200
+              scheme: HTTP
             failureThreshold: 2
             initialDelaySeconds: 5
             periodSeconds: 5

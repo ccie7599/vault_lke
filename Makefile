@@ -67,8 +67,13 @@ status: ## Check Vault cluster status
 		kubectl -n $(NAMESPACE) exec vault-$$i -- vault status || true; \
 	done
 	@echo ""
-	@echo "=== Raft Peers ==="
-	@kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault operator raft list-peers || echo "Vault may be sealed"
+	@echo "=== Raft Peers (requires auth) ==="
+	@if [ -f "vault-init-keys.json" ]; then \
+		VAULT_TOKEN=$$(cat vault-init-keys.json | jq -r '.root_token'); \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault operator raft list-peers || echo "Vault may be sealed or not initialized"; \
+	else \
+		echo "vault-init-keys.json not found. Cannot authenticate."; \
+	fi
 
 logs: ## View logs from vault-0
 	kubectl -n $(NAMESPACE) logs -f $(VAULT_POD)
@@ -119,13 +124,28 @@ get-ip: ## Get Vault LoadBalancer external IP
 	@kubectl -n $(NAMESPACE) get svc vault -o jsonpath='{.status.loadBalancer.ingress[0].ip}' && echo ""
 
 policies: ## List all Vault policies
-	@kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault policy list
+	@if [ -f "vault-init-keys.json" ]; then \
+		VAULT_TOKEN=$$(cat vault-init-keys.json | jq -r '.root_token'); \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault policy list; \
+	else \
+		echo "vault-init-keys.json not found. Cannot authenticate."; \
+	fi
 
 auth-methods: ## List all auth methods
-	@kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault auth list
+	@if [ -f "vault-init-keys.json" ]; then \
+		VAULT_TOKEN=$$(cat vault-init-keys.json | jq -r '.root_token'); \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault auth list; \
+	else \
+		echo "vault-init-keys.json not found. Cannot authenticate."; \
+	fi
 
 secrets-engines: ## List all secrets engines
-	@kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault secrets list
+	@if [ -f "vault-init-keys.json" ]; then \
+		VAULT_TOKEN=$$(cat vault-init-keys.json | jq -r '.root_token'); \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault secrets list; \
+	else \
+		echo "vault-init-keys.json not found. Cannot authenticate."; \
+	fi
 
 clean: ## Delete Vault deployment (WARNING: This will delete all data!)
 	@echo "⚠️  WARNING: This will delete the Vault deployment and ALL data!"
@@ -153,9 +173,14 @@ clean-pvcs: ## Delete persistent volume claims (WARNING: This deletes all stored
 
 test-admin: ## Test admin access
 	@echo "Testing admin access..."
-	@kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault kv put admin/test value=test123 && \
-	kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- vault kv get admin/test && \
-	echo "Admin access OK!"
+	@if [ -f "vault-init-keys.json" ]; then \
+		VAULT_TOKEN=$$(cat vault-init-keys.json | jq -r '.root_token'); \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault kv put admin/test value=test123 && \
+		kubectl -n $(NAMESPACE) exec $(VAULT_POD) -- env VAULT_TOKEN=$$VAULT_TOKEN vault kv get admin/test && \
+		echo "Admin access OK!"; \
+	else \
+		echo "vault-init-keys.json not found. Cannot authenticate."; \
+	fi
 
 test-api: ## Test API access from example pod
 	@echo "Testing API access..."

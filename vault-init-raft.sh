@@ -151,18 +151,18 @@ done
 
 echo ""
 echo "Step 4: Verifying Raft cluster status..."
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault operator raft list-peers
 
 echo ""
 echo "Step 5: Configuring Kubernetes auth method..."
 
 # Enable Kubernetes auth
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault auth enable kubernetes 2>/dev/null || echo "Kubernetes auth already enabled"
 
 # Configure Kubernetes auth
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault write auth/kubernetes/config \
     kubernetes_host="https://kubernetes.default.svc" \
     kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
@@ -174,10 +174,10 @@ echo ""
 # Step 6: Enable KV v2 secrets engines for each namespace
 echo "Step 6: Enabling KV v2 secrets engines..."
 
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault secrets enable -path=admin -version=2 kv 2>/dev/null || echo "admin kv already enabled"
 
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault secrets enable -path=api -version=2 kv 2>/dev/null || echo "api kv already enabled"
 
 echo "✓ Secrets engines enabled"
@@ -189,18 +189,18 @@ echo "Step 7: Creating Vault policies..."
 if [ ! -f "vault-policy-admin.hcl" ] || [ ! -f "vault-policy-api.hcl" ] || [ ! -f "vault-policy-operator.hcl" ]; then
     echo "⚠️  Warning: Policy files not found in current directory."
     echo "Skipping policy creation. You can create them later with:"
-    echo "  cat vault-policy-admin.hcl | kubectl exec -n vault vault-0 -i -- env VAULT_TOKEN=\$VAULT_TOKEN vault policy write admin-policy -"
+    echo "  kubectl exec -n vault vault-0 -e VAULT_TOKEN=\$VAULT_TOKEN -- vault policy write admin-policy - < vault-policy-admin.hcl"
 else
     # Admin policy
-    cat vault-policy-admin.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -i -- env VAULT_TOKEN=$VAULT_TOKEN \
+    cat vault-policy-admin.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -i -- \
         vault policy write admin-policy -
 
     # API policy
-    cat vault-policy-api.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -i -- env VAULT_TOKEN=$VAULT_TOKEN \
+    cat vault-policy-api.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -i -- \
         vault policy write api-policy -
 
     # Operator policy
-    cat vault-policy-operator.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -i -- env VAULT_TOKEN=$VAULT_TOKEN \
+    cat vault-policy-operator.hcl | kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -i -- \
         vault policy write operator-policy -
 
     echo "✓ Policies created"
@@ -212,7 +212,7 @@ echo ""
 echo "Step 8: Creating Kubernetes auth roles..."
 
 # Admin role (bound to specific service account)
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault write auth/kubernetes/role/admin \
     bound_service_account_names=vault-admin \
     bound_service_account_namespaces=vault \
@@ -220,7 +220,7 @@ kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
     ttl=24h
 
 # API role (for application pods)
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault write auth/kubernetes/role/api \
     bound_service_account_names=app-vault-access \
     bound_service_account_namespaces=default,apps,production \
@@ -228,7 +228,7 @@ kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
     ttl=1h
 
 # Operator role (for SRE team)
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault write auth/kubernetes/role/operator \
     bound_service_account_names=vault-operator \
     bound_service_account_namespaces=vault \
@@ -241,7 +241,7 @@ echo ""
 # Step 9: Enable audit logging
 echo "Step 9: Enabling audit logging..."
 
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault audit enable file file_path=/vault/data/vault-audit.log 2>/dev/null || echo "Audit log already enabled"
 
 echo "✓ Audit logging enabled"
@@ -250,7 +250,7 @@ echo ""
 echo "=== Vault Configuration Complete ==="
 echo ""
 echo "Cluster Status:"
-kubectl exec -n $NAMESPACE $VAULT_POD -- env VAULT_TOKEN=$VAULT_TOKEN \
+kubectl exec -n $NAMESPACE $VAULT_POD -e VAULT_TOKEN=$VAULT_TOKEN -- \
     vault status
 
 echo ""
