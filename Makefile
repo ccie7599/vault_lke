@@ -90,7 +90,37 @@ shell: ## Open shell in vault-0 pod
 
 deploy-example: ## Deploy example application
 	kubectl apply -f example-app.yaml
-	@echo "Example app deployed. Check logs with: kubectl logs -l app=example-app"
+	@echo "Example app deployed. Check status with: kubectl get pods -l app=example-app"
+
+demo-app: ## Run the full application demo
+	@chmod +x demo-app.sh
+	./demo-app.sh
+
+verify-app: ## Verify example app is working
+	@echo "Checking example app status..."
+	@kubectl get pods -l app=example-app || echo "App not deployed. Run: make deploy-example"
+	@echo ""
+	@if kubectl get pods -l app=example-app >/dev/null 2>&1; then \
+		APP_POD=$$(kubectl get pods -l app=example-app -o jsonpath='{.items[0].metadata.name}'); \
+		echo "Testing authentication from $$APP_POD..."; \
+		kubectl exec $$APP_POD -c app -- sh -c 'KUBE_TOKEN=$$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); VAULT_TOKEN=$$(wget -qO- --post-data="{\"jwt\":\"$$KUBE_TOKEN\",\"role\":\"api\"}" --header="Content-Type: application/json" http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login 2>/dev/null | grep -o "\"client_token\":\"[^\"]*\"" | cut -d\" -f4); if [ -n "$$VAULT_TOKEN" ]; then echo "✓ Authentication successful!"; else echo "✗ Authentication failed"; fi'; \
+	fi
+
+app-logs: ## View logs from example app
+	@APP_POD=$$(kubectl get pods -l app=example-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$APP_POD" ]; then \
+		echo "=== Main Container Logs ==="; \
+		kubectl logs $$APP_POD -c app --tail=20; \
+		echo ""; \
+		echo "=== Vault Agent Logs ==="; \
+		kubectl logs $$APP_POD -c vault-agent --tail=20; \
+	else \
+		echo "No example app pods found"; \
+	fi
+
+clean-example: ## Remove example application
+	kubectl delete -f example-app.yaml || true
+	@echo "Example app removed"
 
 backup: ## Create a Raft snapshot backup
 	@echo "Creating Raft snapshot..."

@@ -147,7 +147,7 @@ vault operator unseal <key3>
 Applications authenticate via Kubernetes service accounts:
 
 ```bash
-# Example: Write secret from a pod
+# Example: Deploy the sample application
 kubectl apply -f example-app.yaml
 
 # The app will automatically:
@@ -155,6 +155,231 @@ kubectl apply -f example-app.yaml
 # 2. Get a Vault token
 # 3. Access secrets from api/ path
 ```
+
+## Example Application Demo
+
+A complete example application is provided to demonstrate how applications securely access Vault secrets using Kubernetes authentication.
+
+### Quick Demo
+
+Run the automated demo script:
+
+```bash
+chmod +x demo-app.sh
+./demo-app.sh
+```
+
+This script will:
+1. Deploy the example application (if not already deployed)
+2. Write a test secret to Vault
+3. Demonstrate authentication from the application pod
+4. Show how the app reads secrets
+5. Display security features in action
+
+### Manual Step-by-Step Demo
+
+#### Step 1: Deploy the Example Application
+
+```bash
+# Deploy the example app with Vault integration
+kubectl apply -f example-app.yaml
+
+# Wait for pods to be ready
+kubectl get pods -l app=example-app -w
+
+# You should see 2 replicas running:
+# NAME                          READY   STATUS    RESTARTS   AGE
+# example-app-xxxxxxxxx-xxxxx   2/2     Running   0          30s
+# example-app-xxxxxxxxx-xxxxx   2/2     Running   0          30s
+```
+
+The example app includes:
+- **Main container**: nginx (represents your application)
+- **Vault Agent sidecar**: Automatically authenticates and manages secrets
+
+#### Step 2: Write a Test Secret
+
+```bash
+# Load your Vault token
+export VAULT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
+
+# Write a secret that the app will read
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN \
+  vault kv put api/myapp/config \
+  database_url="postgresql://mydb:5432/app" \
+  api_key="my-secret-api-key" \
+  environment="production"
+
+# Verify the secret was written
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN \
+  vault kv get api/myapp/config
+```
+
+#### Step 3: Demonstrate Application Authentication
+
+Get into one of the application pods and show the authentication process:
+
+```bash
+# Get the pod name
+export APP_POD=$(kubectl get pods -l app=example-app -o jsonpath='{.items[0].metadata.name}')
+
+# Execute commands inside the pod
+kubectl exec -it $APP_POD -c app -- sh
+```
+
+Inside the pod, run:
+
+```bash
+# 1. Get the Kubernetes service account token
+KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+echo "Service Account Token (first 50 chars): ${KUBE_TOKEN:0:50}..."
+
+# 2. Authenticate with Vault using the Kubernetes auth method
+VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
+
+# Login and get Vault token
+VAULT_TOKEN=$(wget -qO- --post-data='{"jwt":"'$KUBE_TOKEN'","role":"api"}' \
+  --header="Content-Type: application/json" \
+  $VAULT_ADDR/v1/auth/kubernetes/login | \
+  grep -o '"client_token":"[^"]*"' | cut -d'"' -f4)
+
+echo "Vault Token received: ${VAULT_TOKEN:0:30}..."
+
+# 3. Use the Vault token to read secrets
+wget -qO- --header="X-Vault-Token: $VAULT_TOKEN" \
+  $VAULT_ADDR/v1/api/data/myapp/config | \
+  grep -o '"data":{[^}]*}' | sed 's/,/\n  /g'
+
+# Exit the pod
+exit
+```
+
+#### Step 4: Verify Vault Agent Sidecar
+
+The Vault Agent sidecar automatically handles authentication and secret rendering:
+
+```bash
+# Check Vault Agent logs
+kubectl logs $APP_POD -c vault-agent
+
+# You should see:
+# - Authentication successful
+# - Token renewal messages
+# - Template rendering (if configured)
+```
+
+#### Step 5: View Secret Access in Audit Logs
+
+All secret access is logged in Vault's audit log:
+
+```bash
+# View recent audit log entries
+kubectl -n vault exec vault-0 -- tail -50 /vault/data/vault-audit.log | jq .
+
+# Look for entries with:
+# - type: "request"
+# - operation: "read"
+# - path: "api/data/myapp/config"
+```
+
+### What the Demo Proves
+
+✅ **No Secrets in Code**: Application never has hardcoded secrets
+
+✅ **Kubernetes Native Auth**: Uses existing service account for authentication
+
+✅ **Automatic Token Management**: Vault Agent handles token renewal
+
+✅ **Namespace Isolation**: App can only access `api/` namespace, not `admin/`
+
+✅ **Audit Trail**: Every secret access is logged
+
+✅ **Zero Trust**: Even if pod is compromised, secrets are not in environment variables
+
+### Testing Different Access Levels
+
+#### Test API Access (Should Succeed)
+
+```bash
+kubectl exec $APP_POD -c app -- sh -c '
+KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+VAULT_TOKEN=$(wget -qO- --post-data="{\"jwt\":\"$KUBE_TOKEN\",\"role\":\"api\"}" \
+  --header="Content-Type: application/json" \
+  http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login | \
+  grep -o "\"client_token\":\"[^\"]*\"" | cut -d\" -f4)
+
+# Try to read from api namespace (should work)
+wget -qO- --header="X-Vault-Token: $VAULT_TOKEN" \
+  http://vault.vault.svc.cluster.local:8200/v1/api/data/myapp/config
+'
+```
+
+#### Test Admin Access (Should Fail)
+
+```bash
+kubectl exec $APP_POD -c app -- sh -c '
+KUBE_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+VAULT_TOKEN=$(wget -qO- --post-data="{\"jwt\":\"$KUBE_TOKEN\",\"role\":\"api\"}" \
+  --header="Content-Type: application/json" \
+  http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login | \
+  grep -o "\"client_token\":\"[^\"]*\"" | cut -d\" -f4)
+
+# Try to read from admin namespace (should fail with permission denied)
+wget -qO- --header="X-Vault-Token: $VAULT_TOKEN" \
+  http://vault.vault.svc.cluster.local:8200/v1/admin/data/infrastructure/root-ca 2>&1
+'
+```
+
+Expected output: `Code: 403. Errors: * permission denied`
+
+### Cleanup Demo
+
+```bash
+# Remove the example application
+kubectl delete -f example-app.yaml
+
+# Remove test secrets (optional)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN \
+  vault kv delete api/myapp/config
+```
+
+### Advanced: Custom Application Integration
+
+To integrate your own application with Vault:
+
+1. **Add service account to your deployment**:
+   ```yaml
+   spec:
+     serviceAccountName: app-vault-access
+   ```
+
+2. **Add Vault Agent sidecar** (see example-app.yaml for template)
+
+3. **Configure authentication in your app**:
+   ```python
+   # Python example
+   import hvac
+   import os
+   
+   # Read Kubernetes token
+   with open('/var/run/secrets/kubernetes.io/serviceaccount/token') as f:
+       jwt = f.read()
+   
+   # Authenticate with Vault
+   client = hvac.Client(url='http://vault.vault.svc.cluster.local:8200')
+   client.auth.kubernetes.login(
+       role='api',
+       jwt=jwt
+   )
+   
+   # Read secrets
+   secret = client.secrets.kv.v2.read_secret_version(
+       path='myapp/config',
+       mount_point='api'
+   )
+   
+   db_url = secret['data']['data']['database_url']
+   ```
 
 ### Operator Access (SRE)
 
