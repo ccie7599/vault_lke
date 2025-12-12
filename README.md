@@ -128,19 +128,39 @@ chmod +x vault-init.sh
 
 ### 3. Verify Deployment
 
+First, export the root token for authentication:
+
 ```bash
-# Check cluster status
-kubectl -n vault exec vault-0 -- vault status
-
-# List Raft peers
-kubectl -n vault exec vault-0 -- vault operator raft list-peers
-
-# Verify policies
-kubectl -n vault exec vault-0 -- vault policy list
-
-# Check auth methods
-kubectl -n vault exec vault-0 -- vault auth list
+# Export the root token (most commands require this)
+export VAULT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
 ```
+
+Now verify the deployment:
+
+```bash
+# Check cluster status (requires token)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault status
+
+# List Raft peers (requires token)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault operator raft list-peers
+
+# Verify policies (requires token)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault policy list
+
+# Check auth methods (requires token)
+kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault auth list
+```
+
+**Expected output for Raft peers:**
+```
+Node       Address                        State       Voter
+----       -------                        -----       -----
+vault-0    vault-0.vault-internal:8201    leader      true
+vault-1    vault-1.vault-internal:8201    follower    true
+vault-2    vault-2.vault-internal:8201    follower    true
+```
+
+**Note:** All authenticated Vault commands require passing the token via `env VAULT_TOKEN=$VAULT_TOKEN`. The `vault status` command works without a token, but provides limited information.
 
 ### 4. Access Vault UI
 
