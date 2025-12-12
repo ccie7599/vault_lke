@@ -2,6 +2,33 @@
 
 This repository contains a production-ready HashiCorp Vault High Availability (HA) deployment for Linode Kubernetes Engine Enterprise (LKE-Enterprise) with three-tier namespace separation.
 
+## 🚀 Quick Start
+
+**New to this deployment?** Start here:
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Complete 5-step deployment guide for fresh clusters
+- **[ESSENTIAL-FILES.md](ESSENTIAL-FILES.md)** - Which files you need (and which to ignore)
+- **[deploy-fresh.sh](deploy-fresh.sh)** - Automated deployment script
+
+**Time to deploy**: 10-15 minutes from fresh cluster to working demo.
+
+---
+
+## ⚡ Recent Updates & Fixes
+
+**All configuration files have been updated and tested** to fix common deployment issues:
+
+✅ **StatefulSet** - Parallel pod creation prevents deadlock  
+✅ **Health Probes** - Accept sealed/uninitialized Vault as healthy  
+✅ **RBAC** - Includes TokenReview permission for authentication  
+✅ **Init Script** - Properly handles Raft HA cluster formation  
+✅ **Demo Script** - Uses curl -L to follow HA redirects  
+✅ **Authentication** - Correct kubectl syntax and token handling  
+
+**These fixes are consolidated into the main files** (vault-statefulset.yaml, vault-rbac.yaml, vault-init.sh). See [UPDATE-SUMMARY.md](UPDATE-SUMMARY.md) for detailed changes.
+
+---
+
 ## Architecture Overview
 
 ### High Availability Setup
@@ -40,9 +67,14 @@ This deployment implements three distinct access levels:
 - `jq` for JSON processing (for init script)
 - Persistent volume support (Linode Block Storage)
 
-**📖 Important:** Review [DEPLOYMENT-NOTES.md](DEPLOYMENT-NOTES.md) for detailed configuration explanations, common issues, and lessons learned from real-world deployments.
+**📖 Important Resources:**
+- [QUICKSTART.md](QUICKSTART.md) - Step-by-step deployment guide
+- [ESSENTIAL-FILES.md](ESSENTIAL-FILES.md) - File manifest and which files to use
+- [DEPLOYMENT-NOTES.md](DEPLOYMENT-NOTES.md) - Configuration explanations and lessons learned
 
 ## Deployment Steps
+
+**📝 Note:** Use the main files (vault-statefulset.yaml, vault-rbac.yaml, vault-init.sh) - all fixes are consolidated into these. See [ESSENTIAL-FILES.md](ESSENTIAL-FILES.md) for the complete file list.
 
 ### 1. Deploy Vault Infrastructure
 
@@ -589,6 +621,20 @@ export VAULT_TOKEN=$(cat vault-init-keys.json | jq -r '.root_token')
 kubectl -n vault exec vault-0 -- env VAULT_TOKEN=$VAULT_TOKEN vault status
 ```
 
+### 307 Redirect Responses
+
+If you see `307 Temporary Redirect` when authenticating, this is **normal HA behavior**. Requests to standby nodes redirect to the leader. Ensure your HTTP client follows redirects:
+
+```bash
+# Correct: Use -L flag with curl
+curl -L -X POST http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login
+
+# Python requests library follows redirects by default
+# Most HTTP libraries do too
+```
+
+See [HA-REDIRECT-GUIDE.md](HA-REDIRECT-GUIDE.md) for detailed explanation.
+
 ### DNS Lookup Failures During Startup
 
 Errors like "lookup vault-1.vault-internal: no such host" during initial startup are **normal** and can be ignored. They occur while pods are being created.
@@ -696,6 +742,34 @@ vault operator rotate
 # Revoke all leases under a path
 vault lease revoke -prefix api/
 ```
+
+## Additional Documentation
+
+This repository includes comprehensive documentation for different use cases:
+
+### Quick References
+- **[QUICKSTART.md](QUICKSTART.md)** - Fast deployment guide for fresh clusters
+- **[ESSENTIAL-FILES.md](ESSENTIAL-FILES.md)** - File manifest and what to use
+- **[QUICKREF.md](QUICKREF.md)** - Command reference for daily operations
+- **[APP-VERIFICATION.md](APP-VERIFICATION.md)** - Application testing commands
+
+### Detailed Guides
+- **[DEPLOYMENT-NOTES.md](DEPLOYMENT-NOTES.md)** - Configuration explanations, fixes, and lessons learned
+- **[HA-REDIRECT-GUIDE.md](HA-REDIRECT-GUIDE.md)** - Understanding Vault HA redirects
+- **[DEPLOYMENT-CHECKLIST.md](DEPLOYMENT-CHECKLIST.md)** - Production readiness checklist
+- **[UPDATE-SUMMARY.md](UPDATE-SUMMARY.md)** - Detailed changelog of all fixes
+
+### Scripts
+- **[deploy-fresh.sh](deploy-fresh.sh)** - Automated fresh deployment
+- **[demo-app.sh](demo-app.sh)** - Application integration demo
+- **[Makefile](Makefile)** - Convenient commands (`make status`, `make backup`, etc.)
+
+**Note on File Versions:** All fixes have been consolidated into the main files:
+- Use `vault-statefulset.yaml` (not vault-statefulset-fixed.yaml)
+- Use `vault-rbac.yaml` (not vault-rbac-fixed.yaml)  
+- Use `vault-init.sh` (not vault-init-raft.sh)
+
+See [ESSENTIAL-FILES.md](ESSENTIAL-FILES.md) for the complete file manifest.
 
 ## Support and Resources
 

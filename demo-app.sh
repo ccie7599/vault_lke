@@ -81,6 +81,8 @@ echo "Running authentication test from pod..."
 echo ""
 
 kubectl -n $NAMESPACE exec $APP_POD -c app -- sh -c '
+apk add --no-cache curl jq > /dev/null 2>&1
+
 echo "=== Authentication Process ==="
 echo ""
 
@@ -92,12 +94,18 @@ echo ""
 # Authenticate with Vault
 echo "Authenticating with Vault using role: api"
 VAULT_ADDR=http://vault.vault.svc.cluster.local:8200
-VAULT_TOKEN=$(wget -qO- --post-data="{\"jwt\":\"$KUBE_TOKEN\",\"role\":\"api\"}" \
-    --header="Content-Type: application/json" \
-    $VAULT_ADDR/v1/auth/kubernetes/login | grep -o "\"client_token\":\"[^\"]*\"" | cut -d\" -f4)
+
+# Login and get Vault token (use -L to follow redirects to leader)
+AUTH_RESPONSE=$(curl -L -s -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"jwt\":\"$KUBE_TOKEN\",\"role\":\"api\"}" \
+    $VAULT_ADDR/v1/auth/kubernetes/login)
+
+VAULT_TOKEN=$(echo "$AUTH_RESPONSE" | jq -r ".auth.client_token // empty")
 
 if [ -z "$VAULT_TOKEN" ]; then
     echo "✗ Authentication failed!"
+    echo "Response: $AUTH_RESPONSE"
     exit 1
 fi
 
@@ -106,16 +114,17 @@ echo ""
 
 # Read secret
 echo "Reading secret from api/myapp/config..."
-SECRET_DATA=$(wget -qO- --header="X-Vault-Token: $VAULT_TOKEN" \
+SECRET_DATA=$(curl -L -s -H "X-Vault-Token: $VAULT_TOKEN" \
     $VAULT_ADDR/v1/api/data/myapp/config)
 
-if [ $? -eq 0 ]; then
+if echo "$SECRET_DATA" | jq -e ".data.data" > /dev/null 2>&1; then
     echo "✓ Successfully read secret!"
     echo ""
     echo "Secret contents:"
-    echo "$SECRET_DATA" | grep -o "\"data\":{[^}]*}" | sed "s/,/\\n  /g" | sed "s/{/  /g" | sed "s/}//g"
+    echo "$SECRET_DATA" | jq -r ".data.data | to_entries[] | \"  \(.key): \(.value)\""
 else
     echo "✗ Failed to read secret"
+    echo "Response: $SECRET_DATA"
     exit 1
 fi
 '
